@@ -20,3 +20,6 @@ latex/
 *.md5
 
 script/verinfo.rc
+
+# local changes
+.vscode/
