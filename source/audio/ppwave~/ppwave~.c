@@ -64,6 +64,11 @@ void ppwave_perform64(t_ppwave *x, t_object *dsp64, double **ins, long numins, d
 	t_double		*in = ins[0];
 	t_double		*out = outs[0];
 	int				n = sampleframes;
+
+    while (n--)
+    {
+            *out++ = *in++;
+    }
 }
 
 
