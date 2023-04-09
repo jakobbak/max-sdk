@@ -9,17 +9,18 @@
 #include "z_dsp.h"          // required for MSP objects
 #include "ext_obex.h"       // required for "new" style objects
 
+#define PPWAVE_MAX_TARGETS 4
 
 typedef struct _ppwave {
 	t_pxobject w_obj;
     
-    double time[2];
-    double position[2];
-    double velocity[2];
-    double acceleration[2];
-    double jerk[2];
-    double snap[2];
-    double crackle[2];
+    double time[PPWAVE_MAX_TARGETS];
+    double position[PPWAVE_MAX_TARGETS];
+    double velocity[PPWAVE_MAX_TARGETS];
+    double acceleration[PPWAVE_MAX_TARGETS];
+    double jerk[PPWAVE_MAX_TARGETS];
+    double snap[PPWAVE_MAX_TARGETS];
+    double crackle[PPWAVE_MAX_TARGETS];
 } t_ppwave;
 
 
@@ -53,15 +54,13 @@ void *ppwave_new(t_symbol *s,  long argc, t_atom *argv)
 	dsp_setup((t_pxobject *)x,1);
 	outlet_new((t_object *)x, "signal");		// audio outlet
     
-    x->time[0]            = 1.0;
-    x->position[0]        = 0.0;
-    x->velocity[0]        = 0.0;
-    x->acceleration[0]    = 0.0;
-    x->time[1]            = 0.5;
-    x->position[1]        = 1.0;
-    x->velocity[1]        = 0.0;
-    x->acceleration[1]    = 0.0;
-
+    for (int i=0; i<PPWAVE_MAX_TARGETS; i++)
+    {
+        x->time[i]            = i==0 ? 1.0 : (double)i/(double)PPWAVE_MAX_TARGETS;
+        x->position[i]        = sin(2.0*PI*x->time[i]);
+        x->velocity[i]        = 0.0;
+        x->acceleration[i]    = 0.0;
+    }
 	return (x);
 }
 
@@ -72,48 +71,55 @@ void ppwave_free(t_ppwave *x)
 }
 
 
+void calculate_jerk_snap_crackle(t_ppwave *x)
+{
+    for (int i=0; i<PPWAVE_MAX_TARGETS; i++)
+    {
+        double tt, p0, v0, a0, pt, vt, at;
+
+        // target
+        int t = i+1;
+        if(t >= PPWAVE_MAX_TARGETS) t = t - PPWAVE_MAX_TARGETS;
+        
+        // time to target
+        if(i == 0)  tt = x->time[t] - 0.0;
+        else        tt = x->time[t] - x->time[i];
+        
+        p0 = x->position[i];
+        v0 = x->velocity[i];
+        a0 = x->acceleration[i];
+        pt = x->position[t];
+        vt = x->velocity[t];
+        at = x->acceleration[t];
+        x->jerk[i] =     -3 * ( 20*(p0-pt) + 4*(3*v0+2*vt)*tt + (3*a0-  at)*tt*tt ) / (tt*tt*tt);
+        x->snap[i] =     12 * ( 30*(p0-pt) + 2*(8*v0+7*vt)*tt + (3*a0-2*at)*tt*tt ) / (tt*tt*tt*tt);
+        x->crackle[i] = -60 * ( 12*(p0-pt) + 6*(  v0+  vt)*tt + (  a0-  at)*tt*tt ) / (tt*tt*tt*tt*tt);
+/*        object_post((t_object *)x, "[i]{t,p,v,a,j,s,c} = [%i]{%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f}",
+                                    i,
+                                    x->time[i],
+                                    x->position[i],
+                                    x->velocity[i],
+                                    x->acceleration[i],
+                                    x->jerk[i],
+                                    x->snap[i],
+                                    x->crackle[i]
+        ); */
+    }
+}
+
 void ppwave_time(t_ppwave *x, double f)
 {
-    if(f < 0.001) f = 0.001;
-    if(f > 0.999) f = 0.999;
-    x->time[1] = f;
-    double tt, p0, v0, a0, pt, vt, at;
+    if(f < x->time[1] + 0.001) f = x->time[1] + 0.001;
+    if(f > x->time[3] - 0.001) f = x->time[3] - 0.001;
+    x->time[2] = f;
 
-    p0 = x->position[0];
-    v0 = x->velocity[0];
-    a0 = x->acceleration[0];
-    tt = x->time[1] - 0.0;
-    pt = x->position[1];
-    vt = x->velocity[1];
-    at = x->acceleration[1];
-    x->jerk[0] =     -3 * ( 20*(p0-pt) + 4*(3*v0+2*vt)*tt + (3*a0-  at)*tt*tt ) / (tt*tt*tt);
-    x->snap[0] =     12 * ( 30*(p0-pt) + 2*(8*v0+7*vt)*tt + (3*a0-2*at)*tt*tt ) / (tt*tt*tt*tt);
-    x->crackle[0] = -60 * ( 12*(p0-pt) + 6*(  v0+  vt)*tt + (  a0-  at)*tt*tt ) / (tt*tt*tt*tt*tt);
-
-    p0 = x->position[1];
-    v0 = x->velocity[1];
-    a0 = x->acceleration[1];
-    tt = x->time[0] - x->time[1];
-    pt = x->position[0];
-    vt = x->velocity[0];
-    at = x->acceleration[0];
-    x->jerk[1] =     -3 * ( 20*(p0-pt) + 4*(3*v0+2*vt)*tt + (3*a0-  at)*tt*tt ) / (tt*tt*tt);
-    x->snap[1] =     12 * ( 30*(p0-pt) + 2*(8*v0+7*vt)*tt + (3*a0-2*at)*tt*tt ) / (tt*tt*tt*tt);
-    x->crackle[1] = -60 * ( 12*(p0-pt) + 6*(  v0+  vt)*tt + (  a0-  at)*tt*tt ) / (tt*tt*tt*tt*tt);
-    
-//    object_post((t_object *)x, "pos was set to %.3f", x->position);
-//    object_post((t_object *)x, "vel was set to %.3f", x->velocity);
-//    object_post((t_object *)x, "acc was set to %.3f", x->acceleration);
-//    object_post((t_object *)x, "j0 was set to %.3f", x->jerk[0]);
-//    object_post((t_object *)x, "s0 was set to %.3f", x->snap[0]);
-//    object_post((t_object *)x, "c0 was set to %.3f", x->crackle[0]);
-//    object_post((t_object *)x, "j1 was set to %.3f", x->jerk[1]);
-//    object_post((t_object *)x, "s1 was set to %.3f", x->snap[1]);
-//    object_post((t_object *)x, "c1 was set to %.3f", x->crackle[1]);
+    calculate_jerk_snap_crackle(x);
 }
 
 void ppwave_perform64(t_ppwave *x, t_object *dsp64, double **ins, long numins, double **outs, long numouts, long sampleframes, long flags, void *userparam)
 {
+    calculate_jerk_snap_crackle(x);
+
 	t_double		*in = ins[0];
 	t_double		*out = outs[0];
     t_double dt, dt2, dt3, dt4, dt5;
@@ -123,36 +129,35 @@ void ppwave_perform64(t_ppwave *x, t_object *dsp64, double **ins, long numins, d
 
     while (n--)
     {
-        dt  = *in++;
+        double time_now  = *in++;
         
-        if(0 <= dt && dt < x->time[1])
+        for (int i=0; i<PPWAVE_MAX_TARGETS; i++)
         {
-            dt2 = dt*dt;
-            dt3 = dt2*dt;
-            dt4 = dt3*dt;
-            dt5 = dt4*dt;
+            // target
+            int t = i+1;
+            if(t >= PPWAVE_MAX_TARGETS) t = t - PPWAVE_MAX_TARGETS;
+            
+            // time at index and time at target
+            t_double ti;
+            if(i == 0)  ti = 0.0;
+            else        ti = x->time[i];
+            double      tt = x->time[t];
 
-            p = x->position[0];
-            v = x->velocity[0];
-            a = x->acceleration[0];
-            j = x->jerk[0];
-            s = x->snap[0];
-            c = x->crackle[0];
-        }
-        else
-        {
-            dt -= x->time[1];
-            dt2 = dt*dt;
-            dt3 = dt2*dt;
-            dt4 = dt3*dt;
-            dt5 = dt4*dt;
+            if(time_now > ti && time_now < tt)
+            {
+                dt  = time_now - ti;
+                dt2 = dt*dt;
+                dt3 = dt2*dt;
+                dt4 = dt3*dt;
+                dt5 = dt4*dt;
 
-            p = x->position[1];
-            v = x->velocity[1];
-            a = x->acceleration[1];
-            j = x->jerk[1];
-            s = x->snap[1];
-            c = x->crackle[1];
+                p = x->position[i];
+                v = x->velocity[i];
+                a = x->acceleration[i];
+                j = x->jerk[i];
+                s = x->snap[i];
+                c = x->crackle[i];
+            }
         }
         *out++ = p + v*dt + a/2.0*dt2 + j/6.0*dt3 + s/24.0*dt4 + c/120.0*dt5;
     }
