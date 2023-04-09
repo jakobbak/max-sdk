@@ -13,10 +13,10 @@
 typedef struct _ppwave {
 	t_pxobject w_obj;
     
-    double time;
-    double position;
-    double velocity;
-    double acceleration;
+    double time[2];
+    double position[2];
+    double velocity[2];
+    double acceleration[2];
     double jerk[2];
     double snap[2];
     double crackle[2];
@@ -53,11 +53,15 @@ void *ppwave_new(t_symbol *s,  long argc, t_atom *argv)
 	dsp_setup((t_pxobject *)x,1);
 	outlet_new((t_object *)x, "signal");		// audio outlet
     
-    x->time            = 0.5;
-    x->position        = 1.0;
-    x->velocity        = 0.0;
-    x->acceleration    = 0.0;
-    
+    x->time[0]            = 1.0;
+    x->position[0]        = 0.0;
+    x->velocity[0]        = 0.0;
+    x->acceleration[0]    = 0.0;
+    x->time[1]            = 0.5;
+    x->position[1]        = 1.0;
+    x->velocity[1]        = 0.0;
+    x->acceleration[1]    = 0.0;
+
 	return (x);
 }
 
@@ -72,27 +76,27 @@ void ppwave_time(t_ppwave *x, double f)
 {
     if(f < 0.001) f = 0.001;
     if(f > 0.999) f = 0.999;
-    x->time = f;
+    x->time[1] = f;
     double tt, p0, v0, a0, pt, vt, at;
 
-    tt = x->time;
-    p0 = 0.0;
-    v0 = 0.0;
-    a0 = 0.0;
-    pt = x->position;
-    vt = x->velocity;
-    at = x->acceleration;
+    p0 = x->position[0];
+    v0 = x->velocity[0];
+    a0 = x->acceleration[0];
+    tt = x->time[1] - 0.0;
+    pt = x->position[1];
+    vt = x->velocity[1];
+    at = x->acceleration[1];
     x->jerk[0] =     -3 * ( 20*(p0-pt) + 4*(3*v0+2*vt)*tt + (3*a0-  at)*tt*tt ) / (tt*tt*tt);
     x->snap[0] =     12 * ( 30*(p0-pt) + 2*(8*v0+7*vt)*tt + (3*a0-2*at)*tt*tt ) / (tt*tt*tt*tt);
     x->crackle[0] = -60 * ( 12*(p0-pt) + 6*(  v0+  vt)*tt + (  a0-  at)*tt*tt ) / (tt*tt*tt*tt*tt);
 
-    tt = 1.0 - x->time;
-    p0 = x->position;
-    v0 = x->velocity;
-    a0 = x->acceleration;
-    pt = 0.0;
-    vt = 0.0;
-    at = 0.0;
+    p0 = x->position[1];
+    v0 = x->velocity[1];
+    a0 = x->acceleration[1];
+    tt = x->time[0] - x->time[1];
+    pt = x->position[0];
+    vt = x->velocity[0];
+    at = x->acceleration[0];
     x->jerk[1] =     -3 * ( 20*(p0-pt) + 4*(3*v0+2*vt)*tt + (3*a0-  at)*tt*tt ) / (tt*tt*tt);
     x->snap[1] =     12 * ( 30*(p0-pt) + 2*(8*v0+7*vt)*tt + (3*a0-2*at)*tt*tt ) / (tt*tt*tt*tt);
     x->crackle[1] = -60 * ( 12*(p0-pt) + 6*(  v0+  vt)*tt + (  a0-  at)*tt*tt ) / (tt*tt*tt*tt*tt);
@@ -121,31 +125,31 @@ void ppwave_perform64(t_ppwave *x, t_object *dsp64, double **ins, long numins, d
     {
         dt  = *in++;
         
-        if(0 <= dt && dt < x->time)
+        if(0 <= dt && dt < x->time[1])
         {
             dt2 = dt*dt;
             dt3 = dt2*dt;
             dt4 = dt3*dt;
             dt5 = dt4*dt;
 
-            p = 0.0;
-            v = 0.0;
-            a = 0.0;
+            p = x->position[0];
+            v = x->velocity[0];
+            a = x->acceleration[0];
             j = x->jerk[0];
             s = x->snap[0];
             c = x->crackle[0];
         }
         else
         {
-            dt -= x->time;
+            dt -= x->time[1];
             dt2 = dt*dt;
             dt3 = dt2*dt;
             dt4 = dt3*dt;
             dt5 = dt4*dt;
 
-            p = x->position;
-            v = x->velocity;
-            a = x->acceleration;
+            p = x->position[1];
+            v = x->velocity[1];
+            a = x->acceleration[1];
             j = x->jerk[1];
             s = x->snap[1];
             c = x->crackle[1];
