@@ -7,16 +7,11 @@
 
 #include "ext.h"            // standard Max include, always required (except in Jitter)
 #include "z_dsp.h"          // required for MSP objects
-#include "math.h"
-#include "ext_buffer.h"
-#include "ext_atomic.h"
 #include "ext_obex.h"       // required for "new" style objects
 
 
 typedef struct _ppwave {
 	t_pxobject w_obj;
-	t_buffer_ref *w_buf;
-	t_symbol *w_name;
     
     double time;
     double position;
@@ -35,7 +30,6 @@ void ppwave_perform64(t_ppwave *x, t_object *dsp64, double **ins, long numins, d
 void ppwave_dsp64(t_ppwave *x, t_object *dsp64, short *count, double samplerate, long maxvectorsize, long flags);
 
 
-static t_symbol *ps_buffer_modified;
 static t_class *s_ppwave_class;
 
 
