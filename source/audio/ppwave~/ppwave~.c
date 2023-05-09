@@ -7,16 +7,24 @@
 
 #include "ext.h"            // standard Max include, always required (except in Jitter)
 #include "z_dsp.h"          // required for MSP objects
+#include "math.h"
 #include "ext_obex.h"       // required for "new" style objects
 
 #define PPWAVE_MAX_TARGETS 4
+#define PPWAVE_MOD_INLETS 2
+#define PPWAVE_PHASE_MARGIN 0.001
 
 typedef struct _ppwave {
-	t_pxobject w_obj;
+    t_pxobject w_obj;
     double target[PPWAVE_MAX_TARGETS][7];
-    double temp[PPWAVE_MAX_TARGETS][7];
+    double fixed_target[PPWAVE_MAX_TARGETS][7]; // modulated target
+    /** our mod matrix has `PPWAVE_MOD_INLETS` which each can be be added to
+    one parameter on one target. The parameters that can be modulated are the one below
+    `JRK`, i.e `PHA`, `POS`, `VEL`, or `ACC`.
+    Each of these combinations will have a multiplier, which is set by messages */
+    double mod_matrix[PPWAVE_MOD_INLETS][3]; // [mod][target, parameter, mult]
 } t_ppwave;
-
+        
 typedef enum {
     PHA = 0,
     POS,
@@ -27,8 +35,7 @@ typedef enum {
     CRK,
     TARGET_NUM_PARAMS
 } target_parameter;
-
-
+                                  
 void *ppwave_new(t_symbol *s,  long argc, t_atom *argv);
 void ppwave_free(t_ppwave *x);
 void ppwave_time(t_ppwave *x, double f);
@@ -56,20 +63,29 @@ void *ppwave_new(t_symbol *s,  long argc, t_atom *argv)
 {
 	t_ppwave *x = (t_ppwave *)object_alloc(s_ppwave_class);
 
-	dsp_setup((t_pxobject *)x,1);
+	dsp_setup((t_pxobject *)x,1 + PPWAVE_MOD_INLETS);
 	outlet_new((t_object *)x, "signal");		// audio outlet
     
     for (int i=0; i<PPWAVE_MAX_TARGETS; i++)
     {
-        x->target[i][PHA]       = i==0 ? 1.0 : (double)i/(double)PPWAVE_MAX_TARGETS;
-        x->target[i][POS]       = sin(2.0*PI*x->target[i][PHA]);
-        x->target[i][VEL]       = 0.0;
-        x->target[i][ACC]       = 0.0;
-        x->temp[i][PHA]         = x->target[i][PHA] ;
-        x->temp[i][POS]         = x->target[i][POS];
-        x->temp[i][VEL]         = x->target[i][VEL];
-        x->temp[i][ACC]         = x->target[i][ACC];
+        x->fixed_target[i][PHA] = i==0 ? 1.0 : (double)i/(double)PPWAVE_MAX_TARGETS;
+        x->fixed_target[i][POS] = sin(2.0*PI*x->fixed_target[i][PHA]);
+        x->fixed_target[i][VEL] = 2.0*PI*cos(2.0*PI*x->fixed_target[i][PHA]);
+        x->fixed_target[i][ACC] = 0.0;
     }
+    for (int i=0; i<PPWAVE_MAX_TARGETS; i++)
+    {
+        for (int j=PHA; j<JRK; j++)
+        {
+           x->target[i][j] = x->fixed_target[i][j];
+        }
+    }
+    x->mod_matrix[0][0] = 1;
+    x->mod_matrix[0][1] = POS;
+    x->mod_matrix[0][2] = 1.0;
+    x->mod_matrix[1][0] = 3;
+    x->mod_matrix[1][1] = POS;
+    x->mod_matrix[1][2] = -1.0;
 	return (x);
 }
 
@@ -85,25 +101,6 @@ void calculate_jerk_snap_crackle(t_ppwave *x)
     for (int i=0; i<PPWAVE_MAX_TARGETS; i++)
     {
         double tt, p0, v0, a0, pt, vt, at;
-
-        for (int i=0; i<PPWAVE_MAX_TARGETS; i++)
-        {
-            for (int j=0; j<JRK; j++)
-            {
-                double diff_sign = 1.0;
-                double diff = x->temp[i][j] - x->target[i][j];
-                if(diff < 0.0) diff_sign = -1.0;
-                if(diff * diff_sign > x->temp[i][j] * 0.001)
-                {
-                    x->target[i][j] += diff * 0.01;
-                    //object_post((t_object *)x, "target[%i][%i] = %0.3f", i, j, x->target[i][j]);
-                }
-                else{
-                    x->target[i][j] = x->temp[i][j];
-                }
-                
-            }
-        }
         
         // target
         int t = i+1;
@@ -122,40 +119,47 @@ void calculate_jerk_snap_crackle(t_ppwave *x)
         x->target[i][JRK] =  -3 * ( 20*(p0-pt) + 4*(3*v0+2*vt)*tt + (3*a0-  at)*tt*tt ) / (tt*tt*tt);
         x->target[i][SNP] =  12 * ( 30*(p0-pt) + 2*(8*v0+7*vt)*tt + (3*a0-2*at)*tt*tt ) / (tt*tt*tt*tt);
         x->target[i][CRK] = -60 * ( 12*(p0-pt) + 6*(  v0+  vt)*tt + (  a0-  at)*tt*tt ) / (tt*tt*tt*tt*tt);
-
-
     }
 }
 
 void ppwave_time(t_ppwave *x, double f)
 {
-    if(f < x->target[1][PHA] + 0.001) f = x->target[1][PHA] + 0.001;
-    if(f > x->target[3][PHA] - 0.001) f = x->target[3][PHA] - 0.001;
-//    x->target[2][PHA] = f;
-    x->temp[2][PHA] = f;
 
-    calculate_jerk_snap_crackle(x);
-    
-//    for (int i=0; i<PPWAVE_MAX_TARGETS; i++)
-//    {
-//        object_post((t_object *)x, "[i]{t,p,v,a,j,s,c} = [%i]{%.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f}",
-//                    i,
-//                    x->target[i][PHA],
-//                    x->target[i][POS],
-//                    x->target[i][VEL],
-//                    x->target[i][ACC],
-//                    x->target[i][JRK],
-//                    x->target[i][SNP],
-//                    x->target[i][CRK]
-//                    );
-//    }
+}
 
+bool limit_phase_modulation(t_ppwave *x, int n, double *r)
+{
+    if (n == 0) return false;
+    // we're checking on `target` because a target with a lower number
+    // is calculated before this target, and might have changed in this
+    // iteration of the sampleframes already.
+    if (*r < x->target[n-1][PHA] + PPWAVE_PHASE_MARGIN)
+    {
+        *r = x->target[n-1][PHA] + PPWAVE_PHASE_MARGIN;
+        return true;
+    }
+    if (n == PPWAVE_MAX_TARGETS - 1)
+    {
+        if (*r > 1.0 - PPWAVE_PHASE_MARGIN)
+        {
+            *r = 1.0 - PPWAVE_PHASE_MARGIN;
+            return true;
+        }
+    }
+    else
+    {
+        if (*r > x->fixed_target[n+1][PHA] - PPWAVE_PHASE_MARGIN)
+        {
+            *r = x->fixed_target[n+1][PHA] - PPWAVE_PHASE_MARGIN;
+            return true;
+        }
+    }
+    return false;
 }
 
 void ppwave_perform64(t_ppwave *x, t_object *dsp64, double **ins, long numins, double **outs, long numouts, long sampleframes, long flags, void *userparam)
 {
-    calculate_jerk_snap_crackle(x);
-
+    t_double        *mod_in[PPWAVE_MOD_INLETS];
 	t_double		*in = ins[0];
 	t_double		*out = outs[0];
     t_double dt, dt2, dt3, dt4, dt5;
@@ -163,8 +167,39 @@ void ppwave_perform64(t_ppwave *x, t_object *dsp64, double **ins, long numins, d
 
 	int	n = sampleframes;
 
+    for (int k=0; k<PPWAVE_MOD_INLETS; k++)
+    {
+        mod_in[k] = ins[1+k];
+    }
+    
     while (n--)
     {
+        // calculate target based on modulations
+        for (int k=0; k<PPWAVE_MOD_INLETS; k++)
+        {
+//            t_double        *mod_in = ins[k+1];
+
+            int        tn = (int)x->mod_matrix[k][0];   // target number
+            int        pn = (int)x->mod_matrix[k][1];   // parameter number
+            t_double    m =      x->mod_matrix[k][2];   // multiplier
+            t_double    o =      x->fixed_target[tn][pn]; // original value
+            t_double    q =      *mod_in[k]++;          // modulation value
+            t_double    r =      m * q;                 // resulting value
+
+            if (pn == PHA) limit_phase_modulation(x, tn, &r);
+
+            x->target[tn][pn] = o + r;
+
+        }
+//        t_double f = *mod_in++;
+//        if(f < x->target[1][PHA] + 0.001) f = x->target[1][PHA] + 0.001;
+//        if(f > x->target[3][PHA] - 0.001) f = x->target[3][PHA] - 0.001;
+//        x->target[2][PHA] = f;
+//        x->target[1][POS] = f;
+//        x->target[3][POS] = -f;
+
+        calculate_jerk_snap_crackle(x);
+
         double time_now  = *in++;
         
         for (int i=0; i<PPWAVE_MAX_TARGETS; i++)
