@@ -80,12 +80,12 @@ void *ppwave_new(t_symbol *s,  long argc, t_atom *argv)
            x->target[i][j] = x->fixed_target[i][j];
         }
     }
-    x->mod_matrix[0][0] = 1;
-    x->mod_matrix[0][1] = POS;
-    x->mod_matrix[0][2] = 1.0;
+    x->mod_matrix[0][0] = 2;
+    x->mod_matrix[0][1] = PHA;
+    x->mod_matrix[0][2] = 0.25  ;
     x->mod_matrix[1][0] = 3;
-    x->mod_matrix[1][1] = POS;
-    x->mod_matrix[1][2] = -1.0;
+    x->mod_matrix[1][1] = PHA;
+    x->mod_matrix[1][2] = 0.0;
 	return (x);
 }
 
@@ -127,30 +127,30 @@ void ppwave_time(t_ppwave *x, double f)
 
 }
 
-bool limit_phase_modulation(t_ppwave *x, int n, double *r)
+bool limit_phase_modulation(t_ppwave *x, int tn, double *rv)
 {
-    if (n == 0) return false;
+    if (tn == 0) return *rv = x->fixed_target[tn][PHA];
     // we're checking on `target` because a target with a lower number
     // is calculated before this target, and might have changed in this
     // iteration of the sampleframes already.
-    if (*r < x->target[n-1][PHA] + PPWAVE_PHASE_MARGIN)
+    if (*rv < x->target[tn-1][PHA] + PPWAVE_PHASE_MARGIN)
     {
-        *r = x->target[n-1][PHA] + PPWAVE_PHASE_MARGIN;
+        *rv = x->target[tn-1][PHA] + PPWAVE_PHASE_MARGIN;
         return true;
     }
-    if (n == PPWAVE_MAX_TARGETS - 1)
+    if (tn == PPWAVE_MAX_TARGETS - 1)
     {
-        if (*r > 1.0 - PPWAVE_PHASE_MARGIN)
+        if (*rv > 1.0 - PPWAVE_PHASE_MARGIN)
         {
-            *r = 1.0 - PPWAVE_PHASE_MARGIN;
+            *rv = 1.0 - PPWAVE_PHASE_MARGIN;
             return true;
         }
     }
     else
     {
-        if (*r > x->fixed_target[n+1][PHA] - PPWAVE_PHASE_MARGIN)
+        if (*rv > x->fixed_target[tn+1][PHA] - PPWAVE_PHASE_MARGIN)
         {
-            *r = x->fixed_target[n+1][PHA] - PPWAVE_PHASE_MARGIN;
+            *rv = x->fixed_target[tn+1][PHA] - PPWAVE_PHASE_MARGIN;
             return true;
         }
     }
@@ -179,19 +179,19 @@ void ppwave_perform64(t_ppwave *x, t_object *dsp64, double **ins, long numins, d
         {
 //            t_double        *mod_in = ins[k+1];
 
-            int        tn = (int)x->mod_matrix[k][0];   // target number
-            int        pn = (int)x->mod_matrix[k][1];   // parameter number
-            t_double    m =      x->mod_matrix[k][2];   // multiplier
-            t_double    o =      x->fixed_target[tn][pn]; // original value
-            t_double    q =      *mod_in[k]++;          // modulation value
-            t_double    r =      m * q;                 // resulting value
+            int      tn = (int)x->mod_matrix[k][0];     // target number
+            int      pn = (int)x->mod_matrix[k][1];     // parameter number
+            t_double mu =      x->mod_matrix[k][2];     // multiplier
+            t_double ov =      x->fixed_target[tn][pn]; // original value
+            t_double mv =      *mod_in[k]++;            // modulation value
+            t_double rv =      ov + mv * mu;            // resulting value
 
-            if (pn == PHA) limit_phase_modulation(x, tn, &r);
+            if (pn == PHA) limit_phase_modulation(x, tn, &rv);
 
-            x->target[tn][pn] = o + r;
+            x->target[tn][pn] = rv;
 
         }
-//        t_double f = *mod_in++;
+//        t_double f = *mod_in[0]++;
 //        if(f < x->target[1][PHA] + 0.001) f = x->target[1][PHA] + 0.001;
 //        if(f > x->target[3][PHA] - 0.001) f = x->target[3][PHA] - 0.001;
 //        x->target[2][PHA] = f;
